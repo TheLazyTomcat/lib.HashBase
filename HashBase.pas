@@ -1,5 +1,11 @@
 unit HashBase;
 
+{$IFDEF FPC}
+  {$MODE ObjFPC}{$H+}
+  {$DEFINE FPC_DisableWarns}
+  {$MACRO ON}
+{$ENDIF}
+
 interface
 
 uses
@@ -161,6 +167,12 @@ implementation
 
 uses
   StrRect;
+
+{$IFDEF FPC_DisableWarns}
+  {$DEFINE FPCDWM}
+  {$DEFINE W4055:={$WARN 4055 OFF}} // Conversion between ordinals and pointers is not portable
+  {$DEFINE W5024:={$WARN 5024 OFF}} // Parameter "$1" not used
+{$ENDIF}
 
 {===============================================================================
 --------------------------------------------------------------------------------
@@ -367,10 +379,12 @@ end;
     TBlockHash - protected methods
 -------------------------------------------------------------------------------}
 
+{$IFDEF FPCDWM}{$PUSH}W5024{$ENDIF}
 procedure TBlockHash.ProcessFirst(const Block);
 begin
 fFirstBlock := False;
 end;
+{$IFDEF FPCDWM}{$POP}{$ENDIF}
 
 //------------------------------------------------------------------------------
 
@@ -396,17 +410,23 @@ If Size > 0 then
         If (fTempCount + Size) >= fBlockSize then
           begin
             // data will fill, and potentially overflow, the temp block
+          {$IFDEF FPCDWM}{$PUSH}W4055{$ENDIF}
             Move(Buffer,Pointer(PtrUInt(fTempBlock) + PtrUInt(fTempCount))^,fBlockSize - fTempCount);
+          {$IFDEF FPCDWM}{$POP}{$ENDIF}
             DispatchBlock(fTempBlock^);
             RemainingSize := Size - (fBlockSize - fTempCount);
             fTempCount := 0;
             If RemainingSize > 0 then
+            {$IFDEF FPCDWM}{$PUSH}W4055{$ENDIF}
               ProcessBuffer(Pointer(PtrUInt(Addr(Buffer)) + PtrUInt(Size - RemainingSize))^,RemainingSize);
+            {$IFDEF FPCDWM}{$POP}{$ENDIF}
           end
         else
           begin
+          {$IFDEF FPCDWM}{$PUSH}W4055{$ENDIF}
             // data will not fill the temp block, store end return
             Move(Buffer,Pointer(PtrUInt(fTempBlock) + PtrUInt(fTempCount))^,Size);
+          {$IFDEF FPCDWM}{$POP}{$ENDIF}
             Inc(fTempCount,Size);
           end;
       end
@@ -417,7 +437,9 @@ If Size > 0 then
         For i := 1 to Integer(Size div fBlockSize) do
           begin
             DispatchBlock(WorkPtr^);
+          {$IFDEF FPCDWM}{$PUSH}W4055{$ENDIF}
             WorkPtr := Pointer(PtrUInt(WorkPtr) + PtrUInt(fBlockSize));
+          {$IFDEF FPCDWM}{$POP}{$ENDIF}
           end;
         // store partial block
         fTempCount := Size mod fBlockSize;
