@@ -67,7 +67,7 @@ type
     Function AsString: String; virtual; abstract;
     procedure FromString(const Str: String); virtual; abstract;
     Function TryFromString(const Str: String): Boolean; virtual;
-    procedure FromStringDef(const Str: String; const Default); virtual; abstract;
+    procedure FromStringDef(const Str: String; const Default); virtual;
     // streaming
     procedure SaveToStream(Stream: TStream); virtual; abstract;
     procedure LoadFromStream(Stream: TStream); virtual; abstract;
@@ -353,7 +353,7 @@ Function THashBase.Same(Hash: THashBase): Boolean;
 begin
 Result := Compare(Hash) = 0;
 end;
- 
+
 //------------------------------------------------------------------------------
 
 Function THashBase.TryFromString(const Str: String): Boolean;
@@ -366,6 +366,14 @@ except
 end;
 end;
 
+//------------------------------------------------------------------------------
+
+{$IFDEF FPCDWM}{$PUSH}W5024{$ENDIF}
+procedure THashBase.FromStringDef(const Str: String; const Default);
+begin
+// no implementation here
+end;
+{$IFDEF FPCDWM}{$POP}{$ENDIF}
 
 {===============================================================================
 --------------------------------------------------------------------------------
