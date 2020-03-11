@@ -22,46 +22,52 @@ type
 ===============================================================================}
 type
   THashBase = class(TObject)
-  private
-    fReadBufferSize:  TMemSize;   // used as size of read buffer when processing a stream
   protected
+    fReadBufferSize:      TMemSize;   // used as a size of read buffer when processing a stream
+    fProcessedBytes:      TMemSize;
   {
-    ProcessBuffer must be implemented in hash-specialized class.
+    ProcessBuffer is a main mean of processing the data and must be implemented
+    in all hash-specialized classes.
 
-    It must be able to accept buffer of any size and must be able to be called
-    multiple times on consecutive data while producing an intermediate result.
+    It must be able to accept buffer of any size (including the size of 0)
+    and must be able to be called multiple times on consecutive data while
+    producing an intermediate result.
   }
     procedure ProcessBuffer(const Buffer; Size: TMemSize); virtual; abstract;
+    procedure Initialize; virtual;
+    procedure Finalize; virtual;
   public
-    // methods implemented here
+    // constructors, destructors
     constructor Create;
-    procedure Update(const Buffer; Size: TMemSize); virtual;           // only calls ProcessBuffer
-    procedure Final(const Buffer; Size: TMemSize); overload; virtual;  // calls Update with passed data and unparametrized Final
+    constructor CreateAndInitFrom(Hash: THashBase); overload; virtual; abstract;
+    constructor CreateAndInitFromString(const Str: String); virtual;
+    destructor Destroy; override;
+    // streaming methods
+    procedure Init; virtual;
+    procedure Update(const Buffer; Size: TMemSize); virtual;
+    procedure Final(const Buffer; Size: TMemSize); overload; virtual;
+    procedure Final; overload; virtual;
+    // macro methods (note that these methods are calling Init at the start of processing)
     procedure HashBuffer(const Buffer; Size: TMemSize); virtual;
     procedure HashMemory(Memory: Pointer; Size: TMemSize); virtual;
     procedure HashStream(Stream: TStream; Count: Int64 = -1); virtual;
     procedure HashFile(const FileName: String); virtual;
-    procedure HashFileInMemory(const FileName: String); virtual;
-    procedure HashString(const Str: String); overload; virtual;
-    procedure HashAnsiString(const Str: AnsiString); overload; virtual;
-    procedure HashWideString(const Str: WideString); overload; virtual;
+    procedure HashString(const Str: String); virtual;
+    procedure HashAnsiString(const Str: AnsiString); virtual;
+    procedure HashWideString(const Str: WideString); virtual;
+    // utility methods
+    Function Compare(Hash: THashBase): Integer; virtual; abstract;
     Function Same(Hash: THashBase): Boolean; virtual;
-  {
-    Following methods must be implemented in final specialized classes,
-    that is, in classes that implements a specific hash.
-
-    Methods Init and Final can be partially implemented in common classes, so
-    always call inherited.
-  }
-    procedure Init; virtual; abstract;
-    procedure Final; overload; virtual; abstract;        
     Function AsString: String; virtual; abstract;
     procedure FromString(const Str: String); virtual; abstract;
-    Function TryFromString(const Str: String): Boolean; virtual; abstract;
+    Function TryFromString(const Str: String): Boolean; virtual;
     procedure FromStringDef(const Str: String; const Default); virtual; abstract;
-    Function Compare(Hash: THashBase): Integer; virtual; abstract;
+    // streaming
+    procedure SaveToStream(Stream: TStream); virtual; abstract;
+    procedure LoadFromStream(Stream: TStream); virtual; abstract;
     // properties
     property ReadBufferSize: TMemSize read fReadBufferSize write fReadBufferSize;
+    property ProcessedBytes: TMemSize read fProcessedBytes;
   end;
 
 {===============================================================================
@@ -72,12 +78,31 @@ type
 {===============================================================================
     TStreamHash - class declaration
 ===============================================================================}
-type
-  TStreamHash = class(THashBase);
 {
   Stream hash does not contain any implementation because everything needed is
-  already implemented in base class (THashBase).
+  already implemented in the base class (THashBase).
+
+  Following methods must be overriden or reintroduced (marked with *):
+
+      ProcessBuffer
+      CreateAndInitFrom(THashBase)
+      Final
+      Compare
+      AsString
+      FromString
+    * FromStringDef
+      SaveToStream
+      LoadFromStream
+
+  Following function should also be overriden if the hash calculation
+  requires it:
+
+      Initialize
+      Finalize
+      Init
 }
+type
+  TStreamHash = class(THashBase);
 
 {===============================================================================
 --------------------------------------------------------------------------------
@@ -91,17 +116,34 @@ type
   TBlockHash = class(THashBase)
   private
     fBlockSize:   TMemSize;
-    fFirstBlock:  Boolean;    
+    fFirstBlock:  Boolean;
+    fFinalized:   Boolean;
     fTempBlock:   Pointer;
     fTempCount:   TMemSize; // how many bytes in temp block are passed from previous round
   protected
-    procedure ProcessFirst(const Block); virtual; abstract;
-    procedure ProcessBlock(const Block); virtual; abstract;
+  {
+    ProcessFirst and ProcessLast can call ProcessBlock if first and/or last
+    block processing does not differ from normal block.
+    
+    ProcessFirst sets fFirstBlock to false.
+
+    ProcessLast takes data stored in temp block (if any), alters them if
+    necessary and then processes them. It also produces final result.
+  }
+  {
+    In this implementation only sets fFirstBlock to false.
+    Must be overriden in descendats
+  }
+    procedure ProcessFirst(const Block); virtual;
     procedure ProcessLast; virtual; abstract;
-    procedure ProcessBuffer(const Buffer; Size: TMemSize); overload;
+    procedure ProcessBlock(const Block); virtual; abstract;
+    procedure ProcessBuffer(const Buffer; Size: TMemSize); override;
   public
     procedure Init; override;
     procedure Final; overload; override;
+    property BlockSize: TMemSize read fBlockSize;
+    property FirstBlock: Boolean read fFirstBlock;
+    property Finalized: Boolean read fFinalized;
   end;
 
 {===============================================================================
@@ -118,7 +160,6 @@ type
 implementation
 
 uses
-  Math,
   StrRect;
 
 {===============================================================================
@@ -130,13 +171,54 @@ uses
     THashBase - class implementation
 ===============================================================================}
 {-------------------------------------------------------------------------------
+    THashBase - protected methods
+-------------------------------------------------------------------------------}
+
+procedure THashBase.Initialize;
+begin
+fReadBufferSize := 1024 * 1024; // 1MiB
+fProcessedBytes := 0;
+end;
+
+//------------------------------------------------------------------------------
+
+procedure THashBase.Finalize;
+begin
+// nothing to do
+end;
+
+{-------------------------------------------------------------------------------
     THashBase - public methods
 -------------------------------------------------------------------------------}
 
 constructor THashBase.Create;
 begin
 inherited Create;
-fReadBufferSize := 1024 * 1024; // 1MiB
+Initialize;
+end;
+
+//------------------------------------------------------------------------------
+
+constructor THashBase.CreateAndInitFromString(const Str: String);
+begin
+Create;
+Init;
+FromString(Str);
+end;
+
+//------------------------------------------------------------------------------
+
+destructor THashBase.Destroy;
+begin
+Finalize;
+inherited;
+end;
+
+//------------------------------------------------------------------------------
+
+procedure THashBase.Init;
+begin
+fProcessedBytes := 0;
 end;
 
 //------------------------------------------------------------------------------
@@ -144,6 +226,7 @@ end;
 procedure THashBase.Update(const Buffer; Size: TMemSize);
 begin
 ProcessBuffer(Buffer,Size);
+Inc(fProcessedBytes,Size);
 end;
 
 //------------------------------------------------------------------------------
@@ -152,6 +235,13 @@ procedure THashBase.Final(const Buffer; Size: TMemSize);
 begin
 Update(Buffer,Size);
 Final;
+end;
+
+//------------------------------------------------------------------------------
+
+procedure THashBase.Final;
+begin
+// do nothing here
 end;
 
 //------------------------------------------------------------------------------
@@ -175,6 +265,15 @@ procedure THashBase.HashStream(Stream: TStream; Count: Int64 = -1);
 var
   Buffer:     Pointer;
   BytesRead:  Integer;
+
+  Function Min(A,B: Int64): Int64;  // so there is no need to link Math unit
+  begin
+    If A < B then
+      Result := A
+    else
+      Result := B;
+  end;
+
 begin
 If Assigned(Stream) then
   begin
@@ -192,7 +291,7 @@ If Assigned(Stream) then
         BytesRead := Stream.Read(Buffer^,Min(fReadBufferSize,Count));
         Update(Buffer^,TMemSize(BytesRead));
         Dec(Count,BytesRead);
-      until BytesRead < fReadBufferSize;
+      until TMemSize(BytesRead) < fReadBufferSize;
     finally
       FreeMem(Buffer,fReadBufferSize);
     end;
@@ -209,22 +308,6 @@ var
 begin
 FileStream := TFileStream.Create(StrToRTL(FileName),fmOpenRead or fmShareDenyWrite);
 try
-  HashStream(FileStream);
-finally
-  FileStream.Free;
-end;
-end;
-
-//------------------------------------------------------------------------------
-
-procedure THashBase.HashFileInMemory(const FileName: String);
-var
-  FileStream: TMemoryStream;
-begin
-FileStream := TmemoryStream.Create;
-try
-  FileStream.LoadFromFile(StrToRTL(FileName));
-  FileStream.Seek(0,soBeginning);
   HashStream(FileStream);
 finally
   FileStream.Free;
@@ -258,6 +341,19 @@ Function THashBase.Same(Hash: THashBase): Boolean;
 begin
 Result := Compare(Hash) = 0;
 end;
+ 
+//------------------------------------------------------------------------------
+
+Function THashBase.TryFromString(const Str: String): Boolean;
+begin
+try
+  FromString(Str);
+  Result := True;
+except
+  Result := False;
+end;
+end;
+
 
 {===============================================================================
 --------------------------------------------------------------------------------
@@ -270,5 +366,86 @@ end;
 {-------------------------------------------------------------------------------
     TBlockHash - protected methods
 -------------------------------------------------------------------------------}
+
+procedure TBlockHash.ProcessFirst(const Block);
+begin
+fFirstBlock := False;
+end;
+
+//------------------------------------------------------------------------------
+
+procedure TBlockHash.ProcessBuffer(const Buffer; Size: TMemSize);
+var
+  RemainingSize:  TMemSize;
+  WorkPtr:        Pointer;
+  i:              Integer;  
+
+  procedure DispatchBlock(const Block);
+  begin
+    If fFirstBlock then
+      ProcessFirst(Block)
+    else
+      ProcessBlock(Block);
+  end;
+
+begin
+If Size > 0 then
+  begin
+    If fTempCount > 0 then
+      begin
+        If (fTempCount + Size) >= fBlockSize then
+          begin
+            // data will fill, and potentially overflow, the temp block
+            Move(Buffer,Pointer(PtrUInt(fTempBlock) + PtrUInt(fTempCount))^,fBlockSize - fTempCount);
+            DispatchBlock(fTempBlock^);
+            RemainingSize := Size - (fBlockSize - fTempCount);
+            fTempCount := 0;
+            If RemainingSize > 0 then
+              ProcessBuffer(Pointer(PtrUInt(Addr(Buffer)) + PtrUInt(Size - RemainingSize))^,RemainingSize);
+          end
+        else
+          begin
+            // data will not fill the temp block, store end return
+            Move(Buffer,Pointer(PtrUInt(fTempBlock) + PtrUInt(fTempCount))^,Size);
+            Inc(fTempCount,Size);
+          end;
+      end
+    else
+      begin
+        WorkPtr := Addr(Buffer);
+        // process whole blocks
+        For i := 1 to Integer(Size div fBlockSize) do
+          begin
+            DispatchBlock(WorkPtr^);
+            WorkPtr := Pointer(PtrUInt(WorkPtr) + PtrUInt(fBlockSize));
+          end;
+        // store partial block
+        fTempCount := Size mod fBlockSize;
+        If fTempCount > 0 then
+          Move(WorkPtr^,fTempBlock^,fTempCount);
+      end;
+  end;
+end;
+
+{-------------------------------------------------------------------------------
+    TBlockHash - public methods
+-------------------------------------------------------------------------------}
+
+procedure TBlockHash.Init;
+begin
+inherited;
+fFirstBlock := True;
+fFinalized := False;
+FillChar(fTempBlock^,fBlockSize,0);
+fTempCount := 0;
+end;
+
+//------------------------------------------------------------------------------
+
+procedure TBlockHash.Final;
+begin
+ProcessLast;
+fFinalized := True;
+end;
 
 end.
