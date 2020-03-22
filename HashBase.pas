@@ -18,7 +18,7 @@
     stored in a memory buffer and then the processing is run as a whole at
     finalization.
 
-  Version 0.9 dev (2020-..-..)
+  Version 0.1 dev (2020-..-..)
 
   Last change 2020-..-..
 
