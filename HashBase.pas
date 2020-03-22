@@ -1,3 +1,50 @@
+{-------------------------------------------------------------------------------
+
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+-------------------------------------------------------------------------------}
+{===============================================================================
+
+  HashBase
+
+    Set of base classes for hashing. Sligtly specialized classes for stream
+    hashes, block hashes and buffered hashes are provided.
+
+    Stream and block hashes are self explanatory, buffered hashes are those
+    that can operate only on an entire message and cannot process streamed
+    data and produce intermediary results. For those, the streamed data are
+    stored in a memory buffer and then the processing is run as a whole at
+    finalization.
+
+  Version 0.9 dev (2020-..-..)
+
+  Last change 2020-..-..
+
+  ©2018-2020 František Milt
+
+  Contacts:
+    František Milt: frantisek.milt@gmail.com
+
+  Support:
+    If you find this code useful, please consider supporting its author(s) by
+    making a small donation using the following link(s):
+
+      https://www.paypal.me/FMilt
+
+  Changelog:
+    For detailed changelog and history please refer to this git repository:
+
+      github.com/TheLazyTomcat/Lib.HashBase
+
+  Dependencies:
+    AuxTypes           - github.com/TheLazyTomcat/Lib.AuxTypes
+    AuxClasses         - github.com/TheLazyTomcat/Lib.AuxClasses
+    StrRect            - github.com/TheLazyTomcat/Lib.StrRect
+    StaticMemoryStream - github.com/TheLazyTomcat/Lib.StaticMemoryStream
+
+===============================================================================}
 unit HashBase;
 
 {$IFDEF FPC}
@@ -10,7 +57,7 @@ interface
 
 uses
   SysUtils, Classes,
-  AuxTypes;
+  AuxTypes, AuxClasses;
 
 {===============================================================================
 --------------------------------------------------------------------------------
@@ -19,6 +66,8 @@ uses
 ===============================================================================}
 
 type
+  THashEndianness = (heDefault,heSystem,heLittle,heBig);  // used in streaming
+
   EHASHException = class(Exception);
 
   EHASHNoStream = class(EHASHException);
@@ -27,10 +76,15 @@ type
     THashBase - class declaration
 ===============================================================================}
 type
-  THashBase = class(TObject)
+  THashBase = class(TCustomObject)
   protected
     fReadBufferSize:      TMemSize;   // used as a size of read buffer when processing a stream
+    fBufferProgress:      Boolean;
     fProcessedBytes:      TMemSize;
+    fBreakProcessing:     Boolean;
+    fOnProgressEvent:     TFloatEvent;
+    fOnProgressCallback:  TFloatCallback;
+    procedure DoProgress(Value: Double); virtual;
   {
     ProcessBuffer is a main mean of processing the data and must be implemented
     in all hash-specialized classes.
@@ -43,6 +97,9 @@ type
     procedure Initialize; virtual;
     procedure Finalize; virtual;
   public
+    class Function HashSize: TMemSize; virtual; abstract; // in bytes
+    class Function HashName: String; virtual; abstract;
+    class Function HashEndianness: THashEndianness; virtual; abstract;
     // constructors, destructors
     constructor Create;
     constructor CreateAndInitFrom(Hash: THashBase); overload; virtual; abstract;
@@ -68,12 +125,39 @@ type
     procedure FromString(const Str: String); virtual; abstract;
     Function TryFromString(const Str: String): Boolean; virtual;
     procedure FromStringDef(const Str: String; const Default); virtual;
-    // streaming
-    procedure SaveToStream(Stream: TStream); virtual; abstract;
-    procedure LoadFromStream(Stream: TStream); virtual; abstract;
+    // IO
+    procedure SaveToStream(Stream: TStream; Endianness: THashEndianness = heDefault); virtual; abstract;
+    procedure LoadFromStream(Stream: TStream; Endianness: THashEndianness = heDefault); virtual; abstract;
+    procedure SaveToBuffer(var Buffer; Endianness: THashEndianness = heDefault); virtual;
+    procedure LoadFromBuffer(const Buffer; Endianness: THashEndianness = heDefault); virtual;
     // properties
     property ReadBufferSize: TMemSize read fReadBufferSize write fReadBufferSize;
+    property BufferProgress: Boolean read fBufferProgress write fBufferProgress;
     property ProcessedBytes: TMemSize read fProcessedBytes;
+  {
+    BreakProcessing, when set to true inside of progress event or callback,
+    will cause premature termination of hashing right after return from the
+    call.
+  }
+    property BreakProcessing: Boolean read fBreakProcessing write fBreakProcessing;
+  {
+    Progress is reported only from macro methods (HashBuffer, HashMemory, ...).
+
+    When BufferProgress is set to false (default), the progress is reported only
+    when processing stream or file. When set to true, the progress is reported
+    from all macro methods.
+    But note that progress is calculated and reported only on the boundary of
+    read buffer, of which size is set in ReadBufferSize property. This means
+    that, when processing data smaller than this buffer, no actual progress is
+    reported, only 0% (0.0) and 100% (1.0).
+
+    Progress value is normalized, meaning it is reported in the range <0,1>.
+
+    Note that buffered hashes do not report progress at all.
+  }
+    property OnProgressEvent: TFloatEvent read fOnProgressEvent write fOnProgressEvent;
+    property OnProgressCallback: TFloatCallback read fOnProgressCallback write fOnProgressCallback;
+    property OnProgress: TFloatEvent read fOnProgressEvent write fOnProgressEvent;
   end;
 
 {===============================================================================
@@ -91,6 +175,9 @@ type
   Following methods must be overriden or reintroduced (marked with *):
 
       ProcessBuffer
+      HashSize
+      HashName
+      HashEndianness
       CreateAndInitFrom(THashBase)
       Final
       Compare
@@ -162,11 +249,12 @@ type
 ===============================================================================}
 type
   TBufferHash = class(THashBase);
+  {todo}
 
 implementation
 
 uses
-  StrRect;
+  StrRect, StaticMemoryStream;
 
 {$IFDEF FPC_DisableWarns}
   {$DEFINE FPCDWM}
@@ -186,10 +274,28 @@ uses
     THashBase - protected methods
 -------------------------------------------------------------------------------}
 
+procedure THashBase.DoProgress(Value: Double);
+begin
+If Value < 0.0 then
+  Value := 0.0
+else If Value > 1.0 then
+  Value := 1.0;
+If Assigned(fOnProgressEvent) then
+  fOnProgressEvent(Self,Value);
+If Assigned(fOnProgressCallback) then
+  fOnProgressCallback(Self,Value);
+end;
+
+//------------------------------------------------------------------------------
+
 procedure THashBase.Initialize;
 begin
 fReadBufferSize := 1024 * 1024; // 1MiB
+fBufferProgress := False;
 fProcessedBytes := 0;
+fBreakProcessing := False;
+fOnProgressEvent := nil;
+fOnProgressCallback := nil;
 end;
 
 //------------------------------------------------------------------------------
@@ -259,9 +365,23 @@ end;
 //------------------------------------------------------------------------------
 
 procedure THashBase.HashBuffer(const Buffer; Size: TMemSize);
+var
+  Stream: TStaticMemoryStream;
 begin
-Init;
-Final(Buffer,Size);
+If fBufferProgress then
+  begin
+    Stream := TStaticMemoryStream.Create(@Buffer,Size);
+    try
+      HashStream(Stream);
+    finally
+      Stream.Free;
+    end;
+  end
+else
+  begin
+    Init;
+    Final(Buffer,Size);
+  end;
 end;
 
 //------------------------------------------------------------------------------
@@ -277,6 +397,7 @@ procedure THashBase.HashStream(Stream: TStream; Count: Int64 = -1);
 var
   Buffer:     Pointer;
   BytesRead:  Integer;
+  InitCount:  Int64;
 
   Function Min(A,B: Int64): Int64;  // so there is no need to link Math unit
   begin
@@ -297,13 +418,17 @@ If Assigned(Stream) then
         Stream.Seek(0,soBeginning);
         Count := Stream.Size;
       end;
+    InitCount := Count;
     GetMem(Buffer,fReadBufferSize);
     try
+      fBreakProcessing := False;
+      DoProgress(0.0);
       repeat
         BytesRead := Stream.Read(Buffer^,Min(fReadBufferSize,Count));
         Update(Buffer^,TMemSize(BytesRead));
         Dec(Count,BytesRead);
-      until TMemSize(BytesRead) < fReadBufferSize;
+        DoProgress((InitCount - Count) / InitCount);
+      until (TMemSize(BytesRead) < fReadBufferSize) or fBreakProcessing;
     finally
       FreeMem(Buffer,fReadBufferSize);
     end;
@@ -374,6 +499,34 @@ begin
 // no implementation here
 end;
 {$IFDEF FPCDWM}{$POP}{$ENDIF}
+
+//------------------------------------------------------------------------------
+
+procedure THashBase.SaveToBuffer(var Buffer; Endianness: THashEndianness = heDefault);
+var
+  Stream: TWritableStaticMemoryStream;
+begin
+Stream := TWritableStaticMemoryStream.Create(@Buffer,HashSize);
+try
+  SaveToStream(Stream,Endianness);
+finally
+  Stream.Free;
+end;
+end;
+
+//------------------------------------------------------------------------------
+
+procedure THashBase.LoadFromBuffer(const Buffer; Endianness: THashEndianness = heDefault);
+var
+  Stream: TStaticMemoryStream;
+begin
+Stream := TStaticMemoryStream.Create(@Buffer,HashSize);
+try
+  LoadFromStream(Stream,Endianness);
+finally
+  Stream.Free;
+end;
+end;
 
 {===============================================================================
 --------------------------------------------------------------------------------
