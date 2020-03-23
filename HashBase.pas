@@ -68,6 +68,8 @@ uses
 type
   THashEndianness = (heDefault,heSystem,heLittle,heBig);  // used in streaming
 
+  THashImplementation = (himPascal,himAssembly);
+
   EHASHException = class(Exception);
 
   EHASHNoStream = class(EHASHException);
@@ -84,6 +86,8 @@ type
     fBreakProcessing:     Boolean;
     fOnProgressEvent:     TFloatEvent;
     fOnProgressCallback:  TFloatCallback;
+    Function GetHashImplementation: THashImplementation; virtual;
+    procedure SetHashImplementation(Value: THashImplementation); virtual;
     procedure DoProgress(Value: Double); virtual;
   {
     ProcessBuffer is a main mean of processing the data and must be implemented
@@ -141,6 +145,16 @@ type
   }
     property BreakProcessing: Boolean read fBreakProcessing write fBreakProcessing;
   {
+    If hash is implemented both in assembly and pascal, this property can be
+    used to discern which implementation is currently used, and also to set
+    which implementation is to be used.
+
+    Note that when the unit is compiled in PurePascal mode, asm implementation
+    cannot be used and pascal implementation is always used instead,
+    irrespective of how you set this property.
+  }
+    property HashImplementation: THashImplementation read GetHashImplementation write SetHashImplementation;
+  {
     Progress is reported only from macro methods (HashBuffer, HashMemory, ...).
 
     When BufferProgress is set to false (default), the progress is reported only
@@ -190,6 +204,8 @@ type
   Following function should also be overriden if the hash calculation
   requires it:
 
+      GetHashImplementation
+      SetHashImplementation
       Initialize
       Finalize
       Init
@@ -273,6 +289,22 @@ uses
 {-------------------------------------------------------------------------------
     THashBase - protected methods
 -------------------------------------------------------------------------------}
+
+Function THashBase.GetHashImplementation: THashImplementation;
+begin
+Result := himPascal;
+end;
+
+//------------------------------------------------------------------------------
+
+{$IFDEF FPCDWM}{$PUSH}W5024{$ENDIF}
+procedure THashBase.SetHashImplementation(Value: THashImplementation);
+begin
+// do nothing;
+end;
+{$IFDEF FPCDWM}{$POP}{$ENDIF}
+
+//------------------------------------------------------------------------------
 
 procedure THashBase.DoProgress(Value: Double);
 begin
