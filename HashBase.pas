@@ -106,6 +106,7 @@ type
     class Function HashEndianness: THashEndianness; virtual; abstract;
     // constructors, destructors
     constructor Create;
+    constructor CreateAndInit;
     constructor CreateAndInitFrom(Hash: THashBase); overload; virtual; abstract;
     constructor CreateAndInitFromString(const Str: String); virtual;
     destructor Destroy; override;
@@ -349,10 +350,17 @@ end;
 
 //------------------------------------------------------------------------------
 
-constructor THashBase.CreateAndInitFromString(const Str: String);
+constructor THashBase.CreateAndInit;
 begin
 Create;
 Init;
+end;
+
+//------------------------------------------------------------------------------
+
+constructor THashBase.CreateAndInitFromString(const Str: String);
+begin
+CreateAndInit;
 FromString(Str);
 end;
 
