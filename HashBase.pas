@@ -68,7 +68,7 @@ uses
 type
   THashEndianness = (heDefault,heSystem,heLittle,heBig);  // used in streaming
 
-  THashImplementation = (himPascal,himAssembly);
+  THashImplementation = (himPascal,himAssembly,himAccelerated);
 
   EHASHException = class(Exception);
 
