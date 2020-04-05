@@ -106,7 +106,7 @@ type
     class Function HashEndianness: THashEndianness; virtual; abstract;
     // constructors, destructors
     constructor Create;
-    constructor CreateAndInit;
+    constructor CreateAndInit{$IFNDEF FPC}(Dummy: Integer = 0){$ENDIF}; virtual;
     constructor CreateAndInitFrom(Hash: THashBase); overload; virtual; abstract;
     constructor CreateAndInitFromString(const Str: String); virtual;
     destructor Destroy; override;
@@ -350,7 +350,7 @@ end;
 
 //------------------------------------------------------------------------------
 
-constructor THashBase.CreateAndInit;
+constructor THashBase.CreateAndInit{$IFNDEF FPC}(Dummy: Integer = 0){$ENDIF};
 begin
 Create;
 Init;
