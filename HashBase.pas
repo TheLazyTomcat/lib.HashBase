@@ -18,9 +18,9 @@
     stored in a memory buffer and then the processing is run as a whole at
     finalization.
 
-  Version 0.1 dev (2020-..-..)
+  Version 0.2 dev (2020-04-19)
 
-  Last change 2020-..-..
+  Last change 2020-04-19
 
   ©2020 František Milt
 
@@ -72,7 +72,8 @@ type
 
   EHASHException = class(Exception);
 
-  EHASHNoStream = class(EHASHException);
+  EHASHNoStream  = class(EHASHException);
+  EHASHFinalized = class(EHASHException);
 
 {===============================================================================
     THashBase - class declaration
@@ -138,7 +139,7 @@ type
     // properties
     property ReadBufferSize: TMemSize read fReadBufferSize write fReadBufferSize;
     property BufferProgress: Boolean read fBufferProgress write fBufferProgress;
-    property ProcessedBytes: TMemSize read fProcessedBytes;
+    property ProcessedBytes: TMemSize read fProcessedBytes write fProcessedBytes;
   {
     BreakProcessing, when set to true inside of progress event or callback,
     will cause premature termination of hashing right after return from the
@@ -222,34 +223,42 @@ type
 {===============================================================================
     TBlockHash - class declaration
 ===============================================================================}
+{
+  TBlockHash should serve as a base for hashes that operates on blocks of fixed
+  length (eg. MD5, SHA1, ...).
+
+  The same methods as for TStreamHash must be overriden/reintroduced.
+
+  Method Initialize must set fBlockSize field to a proper value BEFORE calling
+  inherited code (it will allocate internal buffers according to this number).
+
+  Method ProcessFirst is called for a first complete block being processed.
+  Method ProcessLast is called at the end of processing for the last block
+  being processed (note that it will be stored in fTempBlock buffer).
+
+  ProcessBuffer is fully implemented at this point and descendants should not
+  need to override it.
+
+  ProcessBlock is called to process blocks that are not first nor last, but
+  ProcessFirst and/or ProcessLast can call it.
+}
 type
   TBlockHash = class(THashBase)
-  private
-    fBlockSize:   TMemSize;
-    fFirstBlock:  Boolean;
-    fFinalized:   Boolean;
-    fTempBlock:   Pointer;
-    fTempCount:   TMemSize; // how many bytes in temp block are passed from previous round
   protected
-  {
-    ProcessFirst and ProcessLast can call ProcessBlock if first and/or last
-    block processing does not differ from normal block.
-    
-    ProcessFirst sets fFirstBlock to false.
-
-    ProcessLast takes data stored in temp block (if any), alters them if
-    necessary and then processes them. It also produces final result.
-  }
-  {
-    In this implementation only sets fFirstBlock to false.
-    Must be overriden in descendats
-  }
+    fBlockSize:   TMemSize; // must be set in descendants, in method Initialization, before a call to inherited code
+    fFirstBlock:  Boolean;  // set to true in init, set to false in ProcessFirst
+    fFinalized:   Boolean;  // set to false in init, set to true in ProcessLast
+    fTempBlock:   Pointer;  // transfered data/incomplete block data (internal)
+    fTempCount:   TMemSize; // how many bytes in temp block are passed from previous round (internal)
+    procedure ProcessBlock(const Block); virtual; abstract;
     procedure ProcessFirst(const Block); virtual;
     procedure ProcessLast; virtual; abstract;
-    procedure ProcessBlock(const Block); virtual; abstract;
     procedure ProcessBuffer(const Buffer; Size: TMemSize); override;
+    procedure Initialize; override;
+    procedure Finalize; override;
   public
     procedure Init; override;
+    procedure Update(const Buffer; Size: TMemSize); override;
     procedure Final; overload; override;
     property BlockSize: TMemSize read fBlockSize;
     property FirstBlock: Boolean read fFirstBlock;
@@ -459,19 +468,23 @@ If Assigned(Stream) then
         Count := Stream.Size;
       end;
     InitCount := Count;
-    GetMem(Buffer,fReadBufferSize);
-    try
-      fBreakProcessing := False;
-      DoProgress(0.0);
-      repeat
-        BytesRead := Stream.Read(Buffer^,Min(fReadBufferSize,Count));
-        Update(Buffer^,TMemSize(BytesRead));
-        Dec(Count,BytesRead);
-        DoProgress((InitCount - Count) / InitCount);
-      until (TMemSize(BytesRead) < fReadBufferSize) or fBreakProcessing;
-    finally
-      FreeMem(Buffer,fReadBufferSize);
-    end;
+    DoProgress(0.0);
+    If InitCount > 0 then
+      begin
+        GetMem(Buffer,fReadBufferSize);
+        try
+          fBreakProcessing := False;
+          repeat
+            BytesRead := Stream.Read(Buffer^,Min(fReadBufferSize,Count));
+            Update(Buffer^,TMemSize(BytesRead));
+            Dec(Count,BytesRead);
+            DoProgress((InitCount - Count) / InitCount);
+          until (TMemSize(BytesRead) < fReadBufferSize) or fBreakProcessing;
+        finally
+          FreeMem(Buffer,fReadBufferSize);
+        end;
+      end
+    else DoProgress(1.0);
     Final;
   end
 else raise EHASHNoStream.Create('THashBase.HashStream: Stream not assigned.');
@@ -585,7 +598,7 @@ procedure TBlockHash.ProcessFirst(const Block);
 begin
 fFirstBlock := False;
 end;
-{$IFDEF FPCDWM}{$POP}{$ENDIF}
+{$IFDEF FPCDWM}{$POP}{$ENDIF}  
 
 //------------------------------------------------------------------------------
 
@@ -608,6 +621,7 @@ If Size > 0 then
   begin
     If fTempCount > 0 then
       begin
+        // some data are stored in the temp block
         If (fTempCount + Size) >= fBlockSize then
           begin
             // data will fill, and potentially overflow, the temp block
@@ -633,6 +647,7 @@ If Size > 0 then
       end
     else
       begin
+        // nothing is stored in the temp block
         WorkPtr := Addr(Buffer);
         // process whole blocks
         For i := 1 to Integer(Size div fBlockSize) do
@@ -642,12 +657,31 @@ If Size > 0 then
             WorkPtr := Pointer(PtrUInt(WorkPtr) + PtrUInt(fBlockSize));
           {$IFDEF FPCDWM}{$POP}{$ENDIF}
           end;
-        // store partial block
+        // store partial block (if any)
         fTempCount := Size mod fBlockSize;
         If fTempCount > 0 then
           Move(WorkPtr^,fTempBlock^,fTempCount);
       end;
   end;
+end;
+
+//------------------------------------------------------------------------------
+
+procedure TBlockHash.Initialize;
+begin
+inherited;
+fFirstBlock := True;
+fFinalized := False;
+fTempBlock := AllocMem(fBlockSize); // also inits fBlockSize to all 0
+fTempCount := 0;
+end;
+
+//------------------------------------------------------------------------------
+
+procedure TBlockHash.Finalize;
+begin
+FreeMem(fTempBlock,fBlockSize);
+inherited;
 end;
 
 {-------------------------------------------------------------------------------
@@ -665,10 +699,21 @@ end;
 
 //------------------------------------------------------------------------------
 
+procedure TBlockHash.Update(const Buffer; Size: TMemSize);
+begin
+If not fFinalized then
+  inherited Update(Buffer,Size)
+else
+  raise EHASHFinalized.Create('TBlockHash.Update: Processing finalized.');
+end;
+
+//------------------------------------------------------------------------------
+
 procedure TBlockHash.Final;
 begin
 ProcessLast;
 fFinalized := True;
+inherited;
 end;
 
 end.
