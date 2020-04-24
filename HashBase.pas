@@ -18,9 +18,9 @@
     stored in a memory buffer and then the processing is run as a whole at
     finalization.
 
-  Version 0.2 dev (2020-04-19)
+  Version 0.3 dev (2020-04-22)
 
-  Last change 2020-04-19
+  Last change 2020-04-22
 
   ©2020 František Milt
 
@@ -108,7 +108,17 @@ type
     // constructors, destructors
     constructor Create;
     constructor CreateAndInit{$IFNDEF FPC}(Dummy: Integer = 0){$ENDIF}; virtual;
-    constructor CreateAndInitFrom(Hash: THashBase); overload; virtual; abstract;
+  {
+    CreateAndInitFrom accepting hash instance can be used to continue hashing,
+    unless noted otherwise in hash implementation.
+
+    Other methods from this group cannot be reliably used for that purpose
+    (passing a hash might not be enough).
+
+    Note that finalizing processing (calling Final) usually prevents this
+    posibility too.
+  }
+    constructor CreateAndInitFrom(Hash: THashBase); overload; virtual;
     constructor CreateAndInitFromString(const Str: String); virtual;
     destructor Destroy; override;
     // streaming methods
@@ -248,8 +258,8 @@ type
     fBlockSize:   TMemSize; // must be set in descendants, in method Initialization, before a call to inherited code
     fFirstBlock:  Boolean;  // set to true in init, set to false in ProcessFirst
     fFinalized:   Boolean;  // set to false in init, set to true in ProcessLast
-    fTempBlock:   Pointer;  // transfered data/incomplete block data (internal)
-    fTempCount:   TMemSize; // how many bytes in temp block are passed from previous round (internal)
+    fTempBlock:   Pointer;  // transfered data/incomplete block data
+    fTempCount:   TMemSize; // how many bytes in temp block are passed from previous round
     procedure ProcessBlock(const Block); virtual; abstract;
     procedure ProcessFirst(const Block); virtual;
     procedure ProcessLast; virtual; abstract;
@@ -257,12 +267,15 @@ type
     procedure Initialize; override;
     procedure Finalize; override;
   public
+    constructor CreateAndInitFrom(Hash: THashBase); overload; override;
     procedure Init; override;
     procedure Update(const Buffer; Size: TMemSize); override;
     procedure Final; overload; override;
     property BlockSize: TMemSize read fBlockSize;
     property FirstBlock: Boolean read fFirstBlock;
     property Finalized: Boolean read fFinalized;
+    property TempBlock: Pointer read fTempBlock;
+    property TempCount: TMemSize read fTempCount;
   end;
 
 {===============================================================================
@@ -363,6 +376,14 @@ constructor THashBase.CreateAndInit{$IFNDEF FPC}(Dummy: Integer = 0){$ENDIF};
 begin
 Create;
 Init;
+end;
+
+//------------------------------------------------------------------------------
+
+constructor THashBase.CreateAndInitFrom(Hash: THashBase);
+begin
+CreateAndInit;
+fProcessedBytes := Hash.ProcessedBytes;
 end;
 
 //------------------------------------------------------------------------------
@@ -687,6 +708,20 @@ end;
 {-------------------------------------------------------------------------------
     TBlockHash - public methods
 -------------------------------------------------------------------------------}
+
+constructor TBlockHash.CreateAndInitFrom(Hash: THashBase);
+begin
+inherited CreateAndInitFrom(Hash);
+If Hash is TBlockHash then
+  begin
+    fFirstBlock := TBlockHash(Hash).FirstBlock;
+    fFinalized := TBlockHash(Hash).Finalized;
+    fTempCount := TBlockHash(Hash).TempCount;
+    Move(TBlockHash(Hash).TempBlock^,fTempBlock^,fTempCount);
+  end;
+end;
+
+//------------------------------------------------------------------------------
 
 procedure TBlockHash.Init;
 begin
