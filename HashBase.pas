@@ -68,7 +68,7 @@ uses
 type
   THashEndianness = (heDefault,heSystem,heLittle,heBig);  // used in streaming
 
-  THashImplementation = (himPascal,himAssembly,himAccelerated);
+  THashImplementation = (hiPascal,hiAssembly,hiAccelerated);
 
   EHASHException = class(Exception);
 
@@ -104,6 +104,21 @@ type
   public
     class Function HashSize: TMemSize; virtual; abstract; // in bytes
     class Function HashName: String; virtual; abstract;
+  {
+    If we consider the hash to be one large quantity (number), then
+    HashEndianness indicates order of bytes in the binary form of the hash.
+
+    The method can only return heLittle or heBig.
+
+    heBig means most significant byte first (lowest memory address), least
+    significatn byte last (highest memory address).
+    heLittle means least significant byte first, most significant byte last.
+
+    Note that this order is invariant and does not depend on the system
+    endianness. To get different endianness, if supported by the hash (in most
+    cases only on single-quantity checksums), the descendants should implement
+    class methods that will provide a conversion mechanism.
+  }
     class Function HashEndianness: THashEndianness; virtual; abstract;
     // constructors, destructors
     constructor Create;
@@ -315,7 +330,7 @@ uses
 
 Function THashBase.GetHashImplementation: THashImplementation;
 begin
-Result := himPascal;
+Result := hiPascal;
 end;
 
 //------------------------------------------------------------------------------
