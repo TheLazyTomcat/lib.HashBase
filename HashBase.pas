@@ -250,7 +250,7 @@ type
 ===============================================================================}
 {
   TBlockHash should serve as a base for hashes that operates on blocks of fixed
-  length (eg. MD5, SHA1, ...).
+  length (eg. MD5, SHA-1, ...).
 
   The same methods as for TStreamHash must be overriden/reintroduced.
 
