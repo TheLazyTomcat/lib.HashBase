@@ -18,9 +18,9 @@
     stored in a memory buffer and then the processing is run as a whole at
     finalization.
 
-  Version 0.3 dev (2020-04-22)
+  Version 0.4 dev (2020-07-18)
 
-  Last change 2020-04-22
+  Last change 2020-07-18
 
   ©2020 František Milt
 
@@ -72,8 +72,8 @@ type
 
   EHASHException = class(Exception);
 
-  EHASHNoStream  = class(EHASHException);
-  EHASHFinalized = class(EHASHException);
+  EHASHNoStream     = class(EHASHException);
+  EHASHInvalidState = class(EHASHException);
 
 {===============================================================================
     THashBase - class declaration
@@ -85,6 +85,8 @@ type
     fBufferProgress:      Boolean;
     fProcessedBytes:      TMemSize;
     fBreakProcessing:     Boolean;
+    fInitialized:         Boolean;
+    fFinalized:           Boolean;
     fOnProgressEvent:     TFloatEvent;
     fOnProgressCallback:  TFloatCallback;
     Function GetHashImplementation: THashImplementation; virtual;
@@ -95,11 +97,16 @@ type
     in all hash-specialized classes.
 
     It must be able to accept buffer of any size (including the size of 0)
-    and must be able to be called multiple times on consecutive data while
-    producing an intermediate result.
+    and must be able to be called multiple times on consecutive data.
   }
     procedure ProcessBuffer(const Buffer; Size: TMemSize); virtual; abstract;
+  {
+    One-time initialization, called from constructor.
+  }
     procedure Initialize; virtual;
+  {
+    One-time finaliyation, called from destructor.
+  }
     procedure Finalize; virtual;
   public
     class Function HashSize: TMemSize; virtual; abstract; // in bytes
@@ -120,6 +127,13 @@ type
     class methods that will provide a conversion mechanism.
   }
     class Function HashEndianness: THashEndianness; virtual; abstract;
+  {
+    Returns true when the hash must be finalized (call to method Final) before
+    it can be seen as valid and complete.
+    When false, the hash can be seen as complete and valid at any point of
+    hashing process.
+  }
+    class Function HashFinalization: Boolean; virtual; abstract;
     // constructors, destructors
     constructor Create;
     constructor CreateAndInit{$IFNDEF FPC}(Dummy: Integer = 0){$ENDIF}; virtual;
@@ -129,19 +143,32 @@ type
 
     Other methods from this group cannot be reliably used for that purpose
     (passing a hash might not be enough).
-
-    Note that finalizing processing (calling Final) usually prevents this
-    posibility too.
   }
     constructor CreateAndInitFrom(Hash: THashBase); overload; virtual;
     constructor CreateAndInitFromString(const Str: String); virtual;
     destructor Destroy; override;
     // streaming methods
+  {
+    Init will completely reset internal state and prepares the object for a new
+    hashing process.
+
+    Sets Initialized to true and Finalized to false.
+  }
     procedure Init; virtual;
+  {
+    Property Initialized must be set to true and Finalized to false, otherwise
+    the Update method will raise an EHASHInvalidState exception.
+  }
     procedure Update(const Buffer; Size: TMemSize); virtual;
+  {
+    Property Initialized must be true and Finalized false, otherwise it raises
+    an EHASHInvalidState exception.
+
+    Sets Finalized to true.
+  }
     procedure Final(const Buffer; Size: TMemSize); overload; virtual;
     procedure Final; overload; virtual;
-    // macro methods (note that these methods are calling Init at the start of processing)
+    // macro methods
     procedure HashBuffer(const Buffer; Size: TMemSize); virtual;
     procedure HashMemory(Memory: Pointer; Size: TMemSize); virtual;
     procedure HashStream(Stream: TStream; Count: Int64 = -1); virtual;
@@ -174,13 +201,15 @@ type
   {
     If hash is implemented both in assembly and pascal, this property can be
     used to discern which implementation is currently used, and also to set
-    which implementation is to be used.
+    which implementation is to be used next.
 
     Note that when the unit is compiled in PurePascal mode, asm implementation
     cannot be used and pascal implementation is always used instead,
     irrespective of how you set this property.
   }
     property HashImplementation: THashImplementation read GetHashImplementation write SetHashImplementation;
+    property Initialized: Boolean read fInitialized;
+    property Finalized: Boolean read fFinalized;
   {
     Progress is reported only from macro methods (HashBuffer, HashMemory, ...).
 
@@ -216,15 +245,19 @@ type
   Following methods must be overriden or reintroduced (marked with *):
 
       ProcessBuffer
+
       HashSize
       HashName
       HashEndianness
+      HashFinalization
+
       CreateAndInitFrom(THashBase)
-      Final
+
       Compare
       AsString
       FromString
     * FromStringDef
+
       SaveToStream
       LoadFromStream
 
@@ -233,9 +266,13 @@ type
 
       GetHashImplementation
       SetHashImplementation
+
       Initialize
       Finalize
+      
       Init
+      Update
+      Final
 }
 type
   TStreamHash = class(THashBase);
@@ -271,10 +308,9 @@ type
   TBlockHash = class(THashBase)
   protected
     fBlockSize:   TMemSize; // must be set in descendants, in method Initialization, before a call to inherited code
-    fFirstBlock:  Boolean;  // set to true in init, set to false in ProcessFirst
-    fFinalized:   Boolean;  // set to false in init, set to true in ProcessLast
-    fTempBlock:   Pointer;  // transfered data/incomplete block data
-    fTempCount:   TMemSize; // how many bytes in temp block are passed from previous round
+    fFirstBlock:  Boolean;  // set to true in Init, set to false in ProcessFirst
+    fTransBlock:  Pointer;  // transfered data/incomplete block data
+    fTransCount:  TMemSize; // how many bytes in temp block are passed from previous round
     procedure ProcessBlock(const Block); virtual; abstract;
     procedure ProcessFirst(const Block); virtual;
     procedure ProcessLast; virtual; abstract;
@@ -284,13 +320,12 @@ type
   public
     constructor CreateAndInitFrom(Hash: THashBase); overload; override;
     procedure Init; override;
-    procedure Update(const Buffer; Size: TMemSize); override;
     procedure Final; overload; override;
     property BlockSize: TMemSize read fBlockSize;
     property FirstBlock: Boolean read fFirstBlock;
     property Finalized: Boolean read fFinalized;
-    property TempBlock: Pointer read fTempBlock;
-    property TempCount: TMemSize read fTempCount;
+    property TransBlock: Pointer read fTransBlock;
+    property TransCount: TMemSize read fTransCount;
   end;
 
 {===============================================================================
@@ -364,6 +399,8 @@ fReadBufferSize := 1024 * 1024; // 1MiB
 fBufferProgress := False;
 fProcessedBytes := 0;
 fBreakProcessing := False;
+fInitialized := False;
+fFinalized := False;
 fOnProgressEvent := nil;
 fOnProgressCallback := nil;
 end;
@@ -399,6 +436,8 @@ constructor THashBase.CreateAndInitFrom(Hash: THashBase);
 begin
 CreateAndInit;
 fProcessedBytes := Hash.ProcessedBytes;
+fInitialized := Hash.Initialized;
+fFinalized := Hash.Finalized;
 end;
 
 //------------------------------------------------------------------------------
@@ -422,14 +461,24 @@ end;
 procedure THashBase.Init;
 begin
 fProcessedBytes := 0;
+fInitialized := True;
+fFinalized := False;
 end;
 
 //------------------------------------------------------------------------------
 
 procedure THashBase.Update(const Buffer; Size: TMemSize);
 begin
-ProcessBuffer(Buffer,Size);
-Inc(fProcessedBytes,Size);
+If fInitialized then
+  begin
+    If not fFinalized then
+      begin
+        ProcessBuffer(Buffer,Size);
+        Inc(fProcessedBytes,Size);
+      end
+    else raise EHASHInvalidState.Create('THashBase.Update: Hash already finalized.');
+  end
+else raise EHASHInvalidState.Create('THashBase.Update: Hash not initialized.');
 end;
 
 //------------------------------------------------------------------------------
@@ -444,7 +493,14 @@ end;
 
 procedure THashBase.Final;
 begin
-// do nothing here
+If fInitialized then
+  begin
+    If not fFinalized then
+      fFinalized := True
+    else
+      raise EHASHInvalidState.Create('THashBase.Final: Hash already finalized.');
+  end
+else raise EHASHInvalidState.Create('THashBase.Final: Hash not initialized.');
 end;
 
 //------------------------------------------------------------------------------
@@ -655,18 +711,18 @@ var
 begin
 If Size > 0 then
   begin
-    If fTempCount > 0 then
+    If fTransCount > 0 then
       begin
         // some data are stored in the temp block
-        If (fTempCount + Size) >= fBlockSize then
+        If (fTransCount + Size) >= fBlockSize then
           begin
-            // data will fill, and potentially overflow, the temp block
+            // data will fill, and potentially overflow, the transfer block
           {$IFDEF FPCDWM}{$PUSH}W4055{$ENDIF}
-            Move(Buffer,Pointer(PtrUInt(fTempBlock) + PtrUInt(fTempCount))^,fBlockSize - fTempCount);
+            Move(Buffer,Pointer(PtrUInt(fTransBlock) + PtrUInt(fTransCount))^,fBlockSize - fTransCount);
           {$IFDEF FPCDWM}{$POP}{$ENDIF}
-            DispatchBlock(fTempBlock^);
-            RemainingSize := Size - (fBlockSize - fTempCount);
-            fTempCount := 0;
+            DispatchBlock(fTransBlock^);
+            RemainingSize := Size - (fBlockSize - fTransCount);
+            fTransCount := 0;
             If RemainingSize > 0 then
             {$IFDEF FPCDWM}{$PUSH}W4055{$ENDIF}
               ProcessBuffer(Pointer(PtrUInt(Addr(Buffer)) + PtrUInt(Size - RemainingSize))^,RemainingSize);
@@ -675,15 +731,15 @@ If Size > 0 then
         else
           begin
           {$IFDEF FPCDWM}{$PUSH}W4055{$ENDIF}
-            // data will not fill the temp block, store end return
-            Move(Buffer,Pointer(PtrUInt(fTempBlock) + PtrUInt(fTempCount))^,Size);
+            // data will not fill the transfer block, store end return
+            Move(Buffer,Pointer(PtrUInt(fTransBlock) + PtrUInt(fTransCount))^,Size);
           {$IFDEF FPCDWM}{$POP}{$ENDIF}
-            Inc(fTempCount,Size);
+            Inc(fTransCount,Size);
           end;
       end
     else
       begin
-        // nothing is stored in the temp block
+        // nothing is stored in the transfer block
         WorkPtr := Addr(Buffer);
         // process whole blocks
         For i := 1 to Integer(Size div fBlockSize) do
@@ -694,9 +750,9 @@ If Size > 0 then
           {$IFDEF FPCDWM}{$POP}{$ENDIF}
           end;
         // store partial block (if any)
-        fTempCount := Size mod fBlockSize;
-        If fTempCount > 0 then
-          Move(WorkPtr^,fTempBlock^,fTempCount);
+        fTransCount := Size mod fBlockSize;
+        If fTransCount > 0 then
+          Move(WorkPtr^,fTransBlock^,fTransCount);
       end;
   end;
 end;
@@ -705,18 +761,18 @@ end;
 
 procedure TBlockHash.Initialize;
 begin
+// fBlockSize should be set from descendant at this point
 inherited;
 fFirstBlock := True;
-fFinalized := False;
-fTempBlock := AllocMem(fBlockSize); // also inits fBlockSize to all 0
-fTempCount := 0;
+fTransBlock := AllocMem(fBlockSize); // also inits fBlockSize to all 0
+fTransCount := 0;
 end;
 
 //------------------------------------------------------------------------------
 
 procedure TBlockHash.Finalize;
 begin
-FreeMem(fTempBlock,fBlockSize);
+FreeMem(fTransBlock,fBlockSize);
 inherited;
 end;
 
@@ -730,9 +786,8 @@ inherited CreateAndInitFrom(Hash);
 If Hash is TBlockHash then
   begin
     fFirstBlock := TBlockHash(Hash).FirstBlock;
-    fFinalized := TBlockHash(Hash).Finalized;
-    fTempCount := TBlockHash(Hash).TempCount;
-    Move(TBlockHash(Hash).TempBlock^,fTempBlock^,fTempCount);
+    fTransCount := TBlockHash(Hash).TransCount;
+    Move(TBlockHash(Hash).TransBlock^,fTransBlock^,fTransCount);
   end;
 end;
 
@@ -742,19 +797,8 @@ procedure TBlockHash.Init;
 begin
 inherited;
 fFirstBlock := True;
-fFinalized := False;
-FillChar(fTempBlock^,fBlockSize,0);
-fTempCount := 0;
-end;
-
-//------------------------------------------------------------------------------
-
-procedure TBlockHash.Update(const Buffer; Size: TMemSize);
-begin
-If not fFinalized then
-  inherited Update(Buffer,Size)
-else
-  raise EHASHFinalized.Create('TBlockHash.Update: Processing finalized.');
+FillChar(fTransBlock^,fBlockSize,0);
+fTransCount := 0;
 end;
 
 //------------------------------------------------------------------------------
@@ -762,7 +806,6 @@ end;
 procedure TBlockHash.Final;
 begin
 ProcessLast;
-fFinalized := True;
 inherited;
 end;
 
