@@ -20,7 +20,7 @@
 
   Version 0.4 dev (2020-07-18)
 
-  Last change 2020-07-18
+  Last change 2020-08-02
 
   ©2020 František Milt
 
@@ -48,10 +48,11 @@
 unit HashBase;
 
 {$IFDEF FPC}
-  {$MODE ObjFPC}{$H+}
+  {$MODE ObjFPC}
   {$DEFINE FPC_DisableWarns}
   {$MACRO ON}
 {$ENDIF}
+{$H+}
 
 interface
 
