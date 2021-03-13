@@ -18,11 +18,11 @@
     stored in a memory buffer and then the processing is run as a whole at
     finalization.
 
-  Version 0.4 dev (2020-07-18)
+  Version 1.0 (2021-03-13)
 
-  Last change 2020-08-02
+  Last change 2021-03-13
 
-  ©2020 František Milt
+  ©2020-2021 František Milt
 
   Contacts:
     František Milt: frantisek.milt@gmail.com
@@ -67,7 +67,7 @@ uses
 ===============================================================================}
 
 type
-  THashEndianness = (heDefault,heSystem,heLittle,heBig);  // used in streaming
+  THashEndianness = (heDefault,heSystem,heLittle,heBig);
 
   THashImplementation = (hiPascal,hiAssembly,hiAccelerated);
 
@@ -95,10 +95,15 @@ type
     procedure DoProgress(Value: Double); virtual;
   {
     ProcessBuffer is a main mean of processing the data and must be implemented
-    in all hash-specialized classes.
+    in all specialized classes (note that block hash and buffer hash fully
+    implements this method and their descendants should not need to change the
+    implementation, but they certainly can).
 
     It must be able to accept buffer of any size (including the size of 0)
     and must be able to be called multiple times on consecutive data.
+
+      WARNING - this methods must process all passed data (of which amount is
+                indicated by Size parameter)!
   }
     procedure ProcessBuffer(const Buffer; Size: TMemSize); virtual; abstract;
   {
@@ -106,7 +111,7 @@ type
   }
     procedure Initialize; virtual;
   {
-    One-time finaliyation, called from destructor.
+    One-time finalization, called from destructor.
   }
     procedure Finalize; virtual;
   public
@@ -172,6 +177,15 @@ type
     // macro methods
     procedure HashBuffer(const Buffer; Size: TMemSize); virtual;
     procedure HashMemory(Memory: Pointer; Size: TMemSize); virtual;
+  {
+    Count indicates how much bytes should be read from the sream and hashed.
+
+    When set to zero, all bytes from current position in the stream to its end
+    will be hashed.
+
+    When set to a negative value (default), the entire stream, irrespective
+    of an actual position, will be hashed.
+  }
     procedure HashStream(Stream: TStream; Count: Int64 = -1); virtual;
     procedure HashFile(const FileName: String); virtual;
     procedure HashString(const Str: String); virtual;
@@ -224,7 +238,7 @@ type
 
     Progress value is normalized, meaning it is reported in the range <0,1>.
 
-    Note that buffered hashes do not report progress at all.
+      WARNING - buffer hashes do not report progress at all!
   }
     property OnProgressEvent: TFloatEvent read fOnProgressEvent write fOnProgressEvent;
     property OnProgressCallback: TFloatCallback read fOnProgressCallback write fOnProgressCallback;
@@ -245,35 +259,21 @@ type
 
   Following methods must be overriden or reintroduced (marked with *):
 
-      ProcessBuffer
+    ProcessBuffer
 
-      HashSize
-      HashName
-      HashEndianness
-      HashFinalization
+    HashSize, HashName, HashEndianness, HashFinalization
 
-      CreateAndInitFrom(THashBase)
+    CreateAndInitFrom(THashBase)
 
-      Compare
-      AsString
-      FromString
-    * FromStringDef
+    Compare, AsString, FromString, FromStringDef*
 
-      SaveToStream
-      LoadFromStream
+    SaveToStream, LoadFromStream
 
-  Following function should also be overriden if the hash calculation
-  requires it:
+  CreateAndInitFrom must copy everything necessary for continuation of hashing
+  into the current instance.
 
-      GetHashImplementation
-      SetHashImplementation
-
-      Initialize
-      Finalize
-      
-      Init
-      Update
-      Final
+  What to do in other methods should be clear from their name, or refer to hash
+  base class declaration for more info.
 }
 type
   TStreamHash = class(THashBase);
@@ -290,25 +290,40 @@ type
   TBlockHash should serve as a base for hashes that operates on blocks of fixed
   length (eg. MD5, SHA-1, ...).
 
-  The same methods as for TStreamHash must be overriden/reintroduced.
+  Following methods must be overriden or reintroduced (*) in descendants:
 
-  Method Initialize must set fBlockSize field to a proper value BEFORE calling
-  inherited code (it will allocate internal buffers according to this number).
+      ProcessBlock, ProcessLast, ProcessFirst
+
+      Initialize
+
+      HashSize, HashName, HashEndianness, HashFinalization
+
+      CreateAndInitFrom(THashBase)
+
+      Compare, AsString, FromString, FromStringDef*
+
+      SaveToStream, LoadFromStream
+
+  Method ProcessBuffer is fully implemented at this point and descendants
+  should not need to override it.
 
   Method ProcessFirst is called for a first complete block being processed.
-  Method ProcessLast is called at the end of processing for the last block
-  being processed (note that it will be stored in fTempBlock buffer).
 
-  ProcessBuffer is fully implemented at this point and descendants should not
-  need to override it.
+  Method ProcessLast is called at the end of processing for the last block
+  being processed (note that it will be stored in fTransBlock buffer).
 
   ProcessBlock is called to process blocks that are not first nor last, but
-  ProcessFirst and/or ProcessLast can call it.
+  ProcessFirst and/or ProcessLast can call it if the processing of first or
+  last block does not differ.
+
+  Method Initialize must set fBlockSize field to a proper value BEFORE calling
+  inherited code (which will allocate internal buffers according to this
+  number).
 }
 type
   TBlockHash = class(THashBase)
   protected
-    fBlockSize:   TMemSize; // must be set in descendants, in method Initialization, before a call to inherited code
+    fBlockSize:   TMemSize;
     fFirstBlock:  Boolean;  // set to true in Init, set to false in ProcessFirst
     fTransBlock:  Pointer;  // transfered data/incomplete block data
     fTransCount:  TMemSize; // how many bytes in temp block are passed from previous round
@@ -337,9 +352,62 @@ type
 {===============================================================================
     TBufferHash - class declaration
 ===============================================================================}
+{
+  Base class for all hashes that are operating only on a complete message (data
+  being hashed). This may be because the processing algorithm changes depending
+  on message length or because the calculation cannot be split into independent
+  consecutive steps.
+  This class stores all streamed data into an internal buffer (hence buffer
+  hash) and passes them to hash calculation as a whole at the finalization.
+  For the sake of optimization, hashing of memory locations using macro methods
+  does not copy the data, the processing is done directly over the passed memory
+  location.
+
+  When inheriting from TBufferHash, the following methods must be overriden or
+  reintroduced (*):
+
+      CalculateHash
+
+      HashSize, HashName, HashEndianness, HashFinalization
+
+      CreateAndInitFrom(THashBase)
+
+      Compare, AsString, FromString, FromStringDef*
+
+      SaveToStream, LoadFromStream
+
+  Method ProcessBuffer is fully implemented and descendants should not need to
+  override it.
+
+  CalculateHash should take the provided memory location (parameters Memory and
+  Count - note that Count is in bytes) and calculate the hash from data stored
+  there.
+
+    WARNING - buffer hash does not report progress, even from macro functions
+              (side effect of this is, that the processing cannot be
+              interrupted by setting BreakProcessing property to true)!
+}
 type
-  TBufferHash = class(THashBase);
-  {todo}
+  TBufferHash = class(THashBase)
+  protected
+    fBuffer:    TMemoryStream;  // internal streaming buffer
+    fMacroProc: Boolean;
+    procedure DoProgress(Value: Double); override;
+    procedure ProcessBuffer(const Buffer; Size: TMemSize); override;
+    procedure CalculateHash(Memory: Pointer; Count: TMemSize); virtual; abstract;
+    procedure Initialize; override;
+    procedure Finalize; override;
+  public
+    constructor CreateAndInitFrom(Hash: THashBase); overload; override;
+    procedure HashBuffer(const Buffer; Size: TMemSize); override;
+    procedure HashMemory(Memory: Pointer; Size: TMemSize); override;
+    procedure HashStream(Stream: TStream; Count: Int64 = -1); override;
+    procedure Init; override;
+    procedure Final; override;
+    procedure Preallocate(Size: TMemSize); virtual;
+    property Buffer: TMemoryStream read fBuffer;
+    property MacroProcessing: Boolean read fMacroProc;
+  end;
 
 implementation
 
@@ -808,6 +876,154 @@ procedure TBlockHash.Final;
 begin
 ProcessLast;
 inherited;
+end;
+
+{===============================================================================
+--------------------------------------------------------------------------------
+                                  TBufferHash
+--------------------------------------------------------------------------------
+===============================================================================}
+{===============================================================================
+    TBufferHash - class implementation
+===============================================================================}
+{-------------------------------------------------------------------------------
+    TBufferHash - protected methods
+-------------------------------------------------------------------------------}
+
+{$IFDEF FPCDWM}{$PUSH}W5024{$ENDIF}
+procedure TBufferHash.DoProgress(Value: Double);
+begin
+// do nothing in here, and DO NOT call inherited code!
+end;
+{$IFDEF FPCDWM}{$POP}{$ENDIF}
+
+//------------------------------------------------------------------------------
+
+procedure TBufferHash.ProcessBuffer(const Buffer; Size: TMemSize);
+begin
+fBuffer.WriteBuffer(Buffer,Size);
+end;
+
+//------------------------------------------------------------------------------
+
+procedure TBufferHash.Initialize;
+begin
+inherited;
+fBuffer := TMemoryStream.Create;
+fMacroProc := False;
+end;
+
+//------------------------------------------------------------------------------
+
+procedure TBufferHash.Finalize;
+begin
+FreeAndNil(fBuffer);
+inherited;
+end;
+
+{-------------------------------------------------------------------------------
+    TBufferHash - public methods
+-------------------------------------------------------------------------------}
+
+constructor TBufferHash.CreateAndInitFrom(Hash: THashBase);
+begin
+inherited CreateAndInitFrom(Hash);
+If Hash is TBufferHash then
+  begin
+    fBuffer.CopyFrom(TBufferHash(Hash).Buffer,0);
+    fMacroProc := TBufferHash(Hash).MacroProcessing;
+  end;
+end;
+
+//------------------------------------------------------------------------------
+
+procedure TBufferHash.HashBuffer(const Buffer; Size: TMemSize);
+begin
+HashMemory(@Buffer,Size);
+end;
+
+//------------------------------------------------------------------------------
+
+procedure TBufferHash.HashMemory(Memory: Pointer; Size: TMemSize);
+begin
+Init;
+try
+  fMacroProc := True;
+  CalculateHash(Memory,Size);
+finally
+  Final;
+end;
+end;
+
+//------------------------------------------------------------------------------
+
+procedure TBufferHash.HashStream(Stream: TStream; Count: Int64 = -1);
+var
+  ActualPtr:  Pointer;
+  ActualSize: TMemSize;
+  MemStream:  TCustomMemoryStream;
+begin
+If Stream is TCustomMemoryStream then
+  begin
+    MemStream := TCustomMemoryStream(Stream);
+    If Count >= 0 then
+      begin
+      {$IFDEF FPCDWM}{$PUSH}W4055{$ENDIF}
+        ActualPtr := Pointer(PtrUInt(MemStream.Memory) + PtrUInt(MemStream.Position));
+      {$IFDEF FPCDWM}{$POP}{$ENDIF}
+        If (Count > 0) or (Count <= (MemStream.Size - MemStream.Position)) then
+          ActualSize := TMemSize(Count)
+        else
+          ActualSize := TMemSize(MemStream.Size - MemStream.Position);
+      end
+    else
+      begin
+        ActualPtr := MemStream.Memory;
+        ActualSize := TMemSize(MemStream.Size);
+      end;
+    HashMemory(ActualPtr,ActualSize);
+  end
+else inherited HashStream(Stream,Count);
+end;
+
+//------------------------------------------------------------------------------
+
+procedure TBufferHash.Init;
+begin
+inherited;
+fBuffer.Clear;
+fMacroProc := False;
+end;
+
+//------------------------------------------------------------------------------
+
+procedure TBufferHash.Final;
+begin
+If not fMacroProc then
+  begin
+    CalculateHash(fBuffer.Memory,TMemSize(fBuffer.Size));
+    fBuffer.Clear;
+  end;
+fMacroProc := False;
+inherited;
+end;
+
+//------------------------------------------------------------------------------
+
+procedure TBufferHash.Preallocate(Size: TMemSize);
+var
+  OldPos: Int64;
+begin
+// do not allow shrinking, in case someone calls this mid-streaming
+If Size > TMemSize(fBuffer.Size) then
+  begin
+    OldPos := fBuffer.Position;
+    try
+      fBuffer.Size := Int64(Size);
+    finally
+      fBuffer.Position := OldPos;
+    end;
+  end;
 end;
 
 end.
