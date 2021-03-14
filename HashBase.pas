@@ -18,9 +18,9 @@
     stored in a memory buffer and then the processing is run as a whole at
     finalization.
 
-  Version 1.0 (2021-03-13)
+  Version 1.0.1 (2021-03-14)
 
-  Last change 2021-03-13
+  Last change 2021-03-14
 
   ©2020-2021 František Milt
 
@@ -244,6 +244,10 @@ type
     property OnProgressCallback: TFloatCallback read fOnProgressCallback write fOnProgressCallback;
     property OnProgress: TFloatEvent read fOnProgressEvent write fOnProgressEvent;
   end;
+
+// in case comeone will need it... ;)
+type
+  THashClass = class of THashBase;
 
 {===============================================================================
 --------------------------------------------------------------------------------
