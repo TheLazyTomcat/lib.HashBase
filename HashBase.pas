@@ -20,7 +20,7 @@
 
   Version 1.0.1 (2021-03-14)
 
-  Last change 2021-03-14
+  Last change 2021-03-19
 
   ©2020-2021 František Milt
 
@@ -245,7 +245,7 @@ type
     property OnProgress: TFloatEvent read fOnProgressEvent write fOnProgressEvent;
   end;
 
-// in case comeone will need it... ;)
+// in case someone will need it... ;)
 type
   THashClass = class of THashBase;
 
