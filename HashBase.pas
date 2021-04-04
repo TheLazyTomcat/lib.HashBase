@@ -18,9 +18,9 @@
     stored in a memory buffer and then the processing is run as a whole at
     finalization.
 
-  Version 1.0.1 (2021-03-14)
+  Version 1.0.2 (2021-04-04)
 
-  Last change 2021-03-19
+  Last change 2021-04-04
 
   ©2020-2021 František Milt
 
@@ -71,6 +71,8 @@ type
 
   THashImplementation = (hiPascal,hiAssembly,hiAccelerated);
 
+  THashImplementations = set of THashImplementation;
+
   EHASHException = class(Exception);
 
   EHASHNoStream     = class(EHASHException);
@@ -115,6 +117,16 @@ type
   }
     procedure Finalize; virtual;
   public
+  {
+    HashImplementationsAvailable returns all variants that are implemented.
+  }
+    class Function HashImplementationsAvailable: THashImplementations; virtual;
+  {
+    HashImplementationsSupported returns all variants that are both implemented
+    and supported - some variants might be available but not supported because
+    existing system does not provide necessary infrastructure.
+  }
+    class Function HashImplementationsSupported: THashImplementations; virtual;
     class Function HashSize: TMemSize; virtual; abstract; // in bytes
     class Function HashName: String; virtual; abstract;
   {
@@ -214,13 +226,16 @@ type
   }
     property BreakProcessing: Boolean read fBreakProcessing write fBreakProcessing;
   {
-    If hash is implemented both in assembly and pascal, this property can be
-    used to discern which implementation is currently used, and also to set
-    which implementation is to be used next.
+    If hash is implemented both in assembly and pascal (and potentially also
+    accelerated), this property can be used to discern which implementation is
+    currently used, and also to set which implementation is to be used next.
 
     Note that when the unit is compiled in PurePascal mode, asm implementation
     cannot be used and pascal implementation is always used instead,
     irrespective of how you set this property.
+
+    Use methods HashImplementationsAvailable and HashImplementationsSupported
+    to obtain which implementation to use.
   }
     property HashImplementation: THashImplementation read GetHashImplementation write SetHashImplementation;
     property Initialized: Boolean read fInitialized;
@@ -488,6 +503,20 @@ end;
 {-------------------------------------------------------------------------------
     THashBase - public methods
 -------------------------------------------------------------------------------}
+
+class Function THashBase.HashImplementationsAvailable: THashImplementations;
+begin
+Result := [hiPascal];
+end;
+
+//------------------------------------------------------------------------------
+
+class Function THashBase.HashImplementationsSupported: THashImplementations;
+begin
+Result := [hiPascal];
+end;
+
+//------------------------------------------------------------------------------
 
 constructor THashBase.Create;
 begin
