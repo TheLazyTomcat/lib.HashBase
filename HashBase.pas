@@ -18,9 +18,9 @@
     stored in a memory buffer and then the processing is run as a whole at
     finalization.
 
-  Version 1.0.2 (2021-04-04)
+  Version 1.0.3 (2021-04-05)
 
-  Last change 2021-04-04
+  Last change 2021-04-05
 
   ©2020-2021 František Milt
 
@@ -653,7 +653,6 @@ var
 begin
 If Assigned(Stream) then
   begin
-    Init;  
     If Count = 0 then
       Count := Stream.Size - Stream.Position;
     If Count < 0 then
@@ -662,24 +661,28 @@ If Assigned(Stream) then
         Count := Stream.Size;
       end;
     InitCount := Count;
+    fBreakProcessing := False;
     DoProgress(0.0);
-    If InitCount > 0 then
+    If not fBreakProcessing  then
       begin
-        GetMem(Buffer,fReadBufferSize);
-        try
-          fBreakProcessing := False;
-          repeat
-            BytesRead := Stream.Read(Buffer^,Min(fReadBufferSize,Count));
-            Update(Buffer^,TMemSize(BytesRead));
-            Dec(Count,BytesRead);
-            DoProgress((InitCount - Count) / InitCount);
-          until (TMemSize(BytesRead) < fReadBufferSize) or fBreakProcessing;
-        finally
-          FreeMem(Buffer,fReadBufferSize);
-        end;
-      end
-    else DoProgress(1.0);
-    Final;
+        Init;
+        If InitCount > 0 then
+          begin
+            GetMem(Buffer,fReadBufferSize);
+            try
+              repeat
+                BytesRead := Stream.Read(Buffer^,Min(fReadBufferSize,Count));
+                Update(Buffer^,TMemSize(BytesRead));
+                Dec(Count,BytesRead);
+                DoProgress((InitCount - Count) / InitCount);
+              until (TMemSize(BytesRead) < fReadBufferSize) or fBreakProcessing;
+            finally
+              FreeMem(Buffer,fReadBufferSize);
+            end;
+          end;
+        Final;
+        DoProgress(1.0);
+      end;
   end
 else raise EHASHNoStream.Create('THashBase.HashStream: Stream not assigned.');
 end;
