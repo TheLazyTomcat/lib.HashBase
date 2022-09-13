@@ -20,9 +20,9 @@
 
   Version 1.0.3 (2021-04-05)
 
-  Last change 2021-04-05
+  Last change 2022-09-13
 
-  ©2020-2021 František Milt
+  ©2020-2022 František Milt
 
   Contacts:
     František Milt: frantisek.milt@gmail.com
@@ -61,6 +61,15 @@ uses
   AuxTypes, AuxClasses;
 
 {===============================================================================
+    Library-specific exceptions
+===============================================================================}
+type
+  EHASHException = class(Exception);
+
+  EHASHNoStream     = class(EHASHException);
+  EHASHInvalidState = class(EHASHException);
+
+{===============================================================================
 --------------------------------------------------------------------------------
                                    THashBase
 --------------------------------------------------------------------------------
@@ -72,11 +81,6 @@ type
   THashImplementation = (hiPascal,hiAssembly,hiAccelerated);
 
   THashImplementations = set of THashImplementation;
-
-  EHASHException = class(Exception);
-
-  EHASHNoStream     = class(EHASHException);
-  EHASHInvalidState = class(EHASHException);
 
 {===============================================================================
     THashBase - class declaration
@@ -474,8 +478,8 @@ If Value < 0.0 then
 else If Value > 1.0 then
   Value := 1.0;
 If Assigned(fOnProgressEvent) then
-  fOnProgressEvent(Self,Value);
-If Assigned(fOnProgressCallback) then
+  fOnProgressEvent(Self,Value)
+else If Assigned(fOnProgressCallback) then
   fOnProgressCallback(Self,Value);
 end;
 
