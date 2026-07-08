@@ -18,9 +18,9 @@
     stored in a memory buffer and then the processing is run as a whole at
     finalization.
 
-  Version 1.0.6 (2025-03-28)
+  Version 1.0.7 (2026-07-08)
 
-  Last change 2026-02-25
+  Last change 2026-07-08
 
   ©2020-2026 František Milt
 
@@ -99,8 +99,16 @@ type
                                    THashBase
 --------------------------------------------------------------------------------
 ===============================================================================}
-
 type
+{
+  THashType
+
+  Used to indicate what kind of algorithm is used to calculate the resulting
+  value - plain checksum (eg. Adler32), cyclic redundancy check (eg. CRC64),
+  simple hash (eg. CityHash), cryptographic hash (eg. SHA3) or something else.
+}
+  THashtype = (htChecksum,htCRC,htHash,htCryptoHash,htOther);
+
   THashEndianness = (heDefault,heSystem,heLittle,heBig);
 
   THashImplementation = (hiPascal,hiAssembly,hiAccelerated);
@@ -156,6 +164,7 @@ type
     existing system does not provide necessary infrastructure.
   }
     class Function HashImplementationsSupported: THashImplementations; virtual;
+    class Function HashType: THashType; virtual; abstract;
     class Function HashSize: TMemSize; virtual; abstract; // in bytes
     class Function HashName: String; virtual; abstract;
   {
